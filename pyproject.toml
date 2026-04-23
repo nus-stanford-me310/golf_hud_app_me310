@@ -1,0 +1,14 @@
+[project]
+name = "golfhud-companion-backend"
+version = "0.1.0"
+description = "Auth + profile API for the GolfHUD Android companion app"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "sqlalchemy>=2.0.0",
+    "pydantic[email]>=2.6.0",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "python-multipart>=0.0.9",
+]

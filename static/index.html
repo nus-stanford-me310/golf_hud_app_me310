@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GolfHUD Companion</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>GolfHUD</h1>
+            <p class="subtitle">Companion setup</p>
+        </header>
+
+        <main id="app"></main>
+    </div>
+
+    <!-- ============ TEMPLATES ============ -->
+    <template id="tpl-login">
+        <section class="card">
+            <h2>Log in</h2>
+            <form id="login-form" class="stack">
+                <label>
+                    Email
+                    <input type="email" name="email" required autocomplete="email" />
+                </label>
+                <label>
+                    Password
+                    <input type="password" name="password" required autocomplete="current-password" />
+                </label>
+                <button type="submit" class="primary">Log in</button>
+                <p class="muted">
+                    No account yet?
+                    <a href="#/signup">Sign up</a>
+                </p>
+                <p class="error" id="login-error" hidden></p>
+            </form>
+        </section>
+    </template>
+
+    <template id="tpl-signup">
+        <section class="card">
+            <nav class="steps">
+                <span class="step" data-step="1">1. Account</span>
+                <span class="step" data-step="2">2. Profile</span>
+                <span class="step" data-step="3">3. Clubs</span>
+            </nav>
+
+            <form id="signup-form" class="stack">
+                <!-- STEP 1 -->
+                <fieldset data-page="1">
+                    <label>
+                        Full name
+                        <input type="text" name="name" required />
+                    </label>
+                    <label>
+                        Email
+                        <input type="email" name="email" required autocomplete="email" />
+                    </label>
+                    <label>
+                        Password (min 6 chars)
+                        <input type="password" name="password" required minlength="6" autocomplete="new-password" />
+                    </label>
+                </fieldset>
+
+                <!-- STEP 2 -->
+                <fieldset data-page="2" hidden>
+                    <p class="muted">Tell us about your game so the HUD can tailor advice.</p>
+                    <label>
+                        Handicap (optional)
+                        <input type="number" name="handicap" step="0.1" min="-5" max="54" />
+                    </label>
+                    <label>
+                        Skill level
+                        <select name="skill_level">
+                            <option value="">— choose —</option>
+                            <option value="beginner">Beginner</option>
+                            <option value="intermediate">Intermediate</option>
+                            <option value="advanced">Advanced</option>
+                            <option value="pro">Pro</option>
+                        </select>
+                    </label>
+                </fieldset>
+
+                <!-- STEP 3 -->
+                <fieldset data-page="3" hidden>
+                    <p class="muted">Typical carry distance per club. Leave blank for clubs you don't use.</p>
+                    <div id="clubs-grid" class="clubs-grid"></div>
+                </fieldset>
+
+                <div class="row">
+                    <button type="button" id="signup-back" class="secondary" hidden>Back</button>
+                    <button type="button" id="signup-next" class="primary">Next</button>
+                    <button type="submit" id="signup-submit" class="primary" hidden>Create account</button>
+                </div>
+
+                <p class="muted">
+                    Already have an account?
+                    <a href="#/login">Log in</a>
+                </p>
+                <p class="error" id="signup-error" hidden></p>
+            </form>
+        </section>
+    </template>
+
+    <template id="tpl-profile">
+        <section class="card">
+            <div class="row between">
+                <h2 id="profile-name">—</h2>
+                <button id="logout-btn" class="link">Log out</button>
+            </div>
+            <p class="muted" id="profile-email">—</p>
+
+            <div class="chips">
+                <div class="chip"><span>Handicap</span><strong id="profile-handicap">—</strong></div>
+                <div class="chip"><span>Skill</span><strong id="profile-skill">—</strong></div>
+                <div class="chip"><span>User ID</span><strong id="profile-uid">—</strong></div>
+            </div>
+
+            <div class="row between" style="margin-top:1.5rem">
+                <h3>Club distances</h3>
+                <button id="clubs-edit" class="link">Edit</button>
+            </div>
+
+            <div id="clubs-view" class="clubs-list"></div>
+
+            <form id="clubs-form" class="stack" hidden>
+                <div id="clubs-edit-grid" class="clubs-grid"></div>
+                <div class="row">
+                    <button type="button" id="clubs-cancel" class="secondary">Cancel</button>
+                    <button type="submit" class="primary">Save</button>
+                </div>
+            </form>
+
+            <p class="error" id="profile-error" hidden></p>
+        </section>
+    </template>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

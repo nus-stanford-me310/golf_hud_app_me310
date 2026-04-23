@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: golfhud-companion
+    runtime: python
+    region: oregon
+    plan: free
+    rootDir: pupil/companion-backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GOLFHUD_JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false   # paste Neon connection string manually in Render dashboard
+      - key: PYTHON_VERSION
+        value: "3.11.9"
