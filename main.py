@@ -6,8 +6,10 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
+from datetime import datetime
+
 from database import Base, engine, get_db
-from models import User, UserClubDistance
+from models import ActiveUser, User, UserClubDistance
 from schemas import (
     SignupRequest,
     LoginRequest,
@@ -16,6 +18,7 @@ from schemas import (
     UpdateProfileRequest,
     UpdateClubsRequest,
     ClubDistance,
+    ActiveUserResponse,
 )
 from auth import (
     hash_password,
@@ -133,6 +136,59 @@ def update_clubs(
     db.commit()
     db.refresh(current_user)
     return current_user.club_distances
+
+
+@app.post("/active-user", response_model=ActiveUserResponse)
+def set_active_user(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The caller becomes the 'active' user broadcast to Unity."""
+    row = db.query(ActiveUser).filter(ActiveUser.id == 1).first()
+    if row is None:
+        row = ActiveUser(id=1, user_id=current_user.user_id, updated_at=datetime.utcnow())
+        db.add(row)
+    else:
+        row.user_id = current_user.user_id
+        row.updated_at = datetime.utcnow()
+    db.commit()
+    return ActiveUserResponse(
+        user_id=current_user.user_id,
+        name=current_user.name,
+        handicap=current_user.handicap,
+        skill_level=current_user.skill_level,
+        updated_at=row.updated_at,
+    )
+
+
+@app.get("/active-user", response_model=ActiveUserResponse)
+def get_active_user(db: Session = Depends(get_db)):
+    """Public endpoint Unity polls to learn who's currently signed in."""
+    row = db.query(ActiveUser).filter(ActiveUser.id == 1).first()
+    if row is None or row.user_id is None or row.user is None:
+        return ActiveUserResponse()
+    u = row.user
+    return ActiveUserResponse(
+        user_id=u.user_id,
+        name=u.name,
+        handicap=u.handicap,
+        skill_level=u.skill_level,
+        updated_at=row.updated_at,
+    )
+
+
+@app.delete("/active-user", response_model=ActiveUserResponse)
+def clear_active_user(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Caller clears active user (called on logout)."""
+    row = db.query(ActiveUser).filter(ActiveUser.id == 1).first()
+    if row is not None:
+        row.user_id = None
+        row.updated_at = datetime.utcnow()
+        db.commit()
+    return ActiveUserResponse()
 
 
 STATIC_DIR = Path(__file__).parent / "static"

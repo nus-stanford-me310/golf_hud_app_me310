@@ -110,6 +110,20 @@ class Shot(Base):
     )
 
 
+class ActiveUser(Base):
+    """Tracks the single 'currently signed-in' user for the Unity HUD to read.
+    Single-row table — id is always 1.
+    """
+
+    __tablename__ = "active_user"
+
+    id = Column(Integer, primary_key=True, default=1)
+    user_id = Column(Integer, ForeignKey("users.user_id"), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User")
+
+
 class ClubRecommendation(Base):
     __tablename__ = "club_recommendations"
 

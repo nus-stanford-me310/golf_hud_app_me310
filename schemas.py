@@ -52,3 +52,14 @@ class UpdateProfileRequest(BaseModel):
 
 class UpdateClubsRequest(BaseModel):
     club_distances: List[ClubDistance]
+
+
+class ActiveUserResponse(BaseModel):
+    user_id: Optional[int] = None
+    name: Optional[str] = None
+    handicap: Optional[float] = None
+    skill_level: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

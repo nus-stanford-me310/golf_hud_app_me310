@@ -201,7 +201,8 @@ function renderSignup() {
 async function renderProfile() {
     mount("tpl-profile");
 
-    document.getElementById("logout-btn").addEventListener("click", () => {
+    document.getElementById("logout-btn").addEventListener("click", async () => {
+        try { await api("/active-user", { method: "DELETE" }); } catch (_) {}
         clearToken();
         currentUser = null;
         window.location.hash = "#/login";
@@ -210,6 +211,8 @@ async function renderProfile() {
     try {
         const user = await api("/users/me");
         currentUser = user;
+        // Broadcast this user as the "active" user so Unity HUD picks it up.
+        api("/active-user", { method: "POST" }).catch(() => {});
         document.getElementById("profile-name").textContent = user.name;
         document.getElementById("profile-email").textContent = user.email;
         document.getElementById("profile-handicap").textContent =
