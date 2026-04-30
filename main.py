@@ -141,7 +141,10 @@ if STATIC_DIR.exists():
 
     @app.get("/")
     def index():
-        return FileResponse(STATIC_DIR / "index.html")
+        return FileResponse(
+            STATIC_DIR / "index.html",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
 
 
 if __name__ == "__main__":
