@@ -216,7 +216,6 @@ async function renderProfile() {
             user.handicap != null ? user.handicap : "—";
         document.getElementById("profile-skill").textContent =
             user.skill_level ? user.skill_level.charAt(0).toUpperCase() + user.skill_level.slice(1) : "—";
-        document.getElementById("profile-uid").textContent = user.user_id;
 
         renderClubsView(user.club_distances);
         bindClubsEdit(user.club_distances);
