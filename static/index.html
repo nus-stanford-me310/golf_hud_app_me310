@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>GolfHUD Companion</title>
-    <link rel="stylesheet" href="/static/styles.css?v=3" />
+    <link rel="stylesheet" href="/static/styles.css?v=4" />
 </head>
 <body>
     <div class="container">
@@ -117,10 +117,15 @@
                     <div class="chip"><span>Handicap</span><strong id="profile-handicap">—</strong></div>
                     <div class="chip"><span>Skill</span><strong id="profile-skill">—</strong></div>
                 </div>
-                <button id="profile-edit" class="link" style="margin-top:0.5rem">Edit profile</button>
+
+                <h3 style="margin-top:1.5rem">Club distances</h3>
+                <div id="clubs-view" class="clubs-list"></div>
+
+                <button id="edit-all" class="primary" style="margin-top:1.25rem; width:100%">Edit</button>
             </div>
 
-            <form id="profile-form" class="stack" hidden style="margin-top:1rem">
+            <form id="edit-form" class="stack" hidden>
+                <h3 style="margin:0">Profile</h3>
                 <label>
                     Handicap
                     <input type="number" name="handicap" step="0.1" min="-5" max="54" />
@@ -135,23 +140,12 @@
                         <option value="pro">Pro</option>
                     </select>
                 </label>
-                <div class="row">
-                    <button type="button" id="profile-cancel" class="secondary">Cancel</button>
-                    <button type="submit" class="primary">Save</button>
-                </div>
-            </form>
 
-            <div class="row between" style="margin-top:1.5rem">
-                <h3>Club distances</h3>
-                <button id="clubs-edit" class="link">Edit</button>
-            </div>
+                <h3 style="margin:0.5rem 0 0">Club distances</h3>
+                <div id="edit-clubs-grid" class="clubs-grid"></div>
 
-            <div id="clubs-view" class="clubs-list"></div>
-
-            <form id="clubs-form" class="stack" hidden>
-                <div id="clubs-edit-grid" class="clubs-grid"></div>
-                <div class="row">
-                    <button type="button" id="clubs-cancel" class="secondary">Cancel</button>
+                <div class="row" style="margin-top:0.5rem">
+                    <button type="button" id="edit-cancel" class="secondary">Cancel</button>
                     <button type="submit" class="primary">Save</button>
                 </div>
             </form>
@@ -160,6 +154,6 @@
         </section>
     </template>
 
-    <script src="/static/app.js?v=3"></script>
+    <script src="/static/app.js?v=4"></script>
 </body>
 </html>

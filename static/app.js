@@ -218,8 +218,7 @@ async function renderProfile() {
             user.skill_level ? user.skill_level.charAt(0).toUpperCase() + user.skill_level.slice(1) : "—";
 
         renderClubsView(user.club_distances);
-        bindClubsEdit(user.club_distances);
-        bindProfileEdit(user);
+        bindEditAll(user);
     } catch (err) {
         if (String(err.message).includes("401")) {
             clearToken();
@@ -229,19 +228,38 @@ async function renderProfile() {
     }
 }
 
-function bindProfileEdit(initialUser) {
+function bindEditAll(initialUser) {
     const view = document.getElementById("profile-view");
-    const form = document.getElementById("profile-form");
-    const editBtn = document.getElementById("profile-edit");
-    const cancelBtn = document.getElementById("profile-cancel");
+    const form = document.getElementById("edit-form");
+    const editBtn = document.getElementById("edit-all");
+    const cancelBtn = document.getElementById("edit-cancel");
+    const grid = document.getElementById("edit-clubs-grid");
 
     let user = initialUser;
+
+    const buildClubGrid = (values) => {
+        grid.innerHTML = CLUBS.map(club => {
+            const v = values[club] != null ? Math.round(values[club]) : "";
+            return `
+                <div class="club-input">
+                    <label>${club}</label>
+                    <div class="club-input-wrap">
+                        <input type="number" min="0" max="400" step="1" name="club::${club}" value="${v}" />
+                    </div>
+                </div>
+            `;
+        }).join("");
+    };
 
     editBtn.addEventListener("click", () => {
         form.querySelector('input[name=handicap]').value =
             user.handicap != null ? user.handicap : "";
         form.querySelector('select[name=skill_level]').value =
             user.skill_level || "";
+        const byClub = Object.fromEntries(
+            (user.club_distances || []).map(c => [c.club, c.avg_yardage])
+        );
+        buildClubGrid(byClub);
         view.hidden = true;
         form.hidden = false;
     });
@@ -249,33 +267,50 @@ function bindProfileEdit(initialUser) {
     cancelBtn.addEventListener("click", () => {
         view.hidden = false;
         form.hidden = true;
+        hideError("profile-error");
     });
 
     form.addEventListener("submit", async (e) => {
         e.preventDefault();
         hideError("profile-error");
+
         const fd = new FormData(form);
         const obj = Object.fromEntries(fd);
-        const payload = {
+
+        const profilePayload = {
             handicap: obj.handicap === "" ? null : Number(obj.handicap),
             skill_level: obj.skill_level || null,
         };
+
+        const club_distances = [];
+        for (const club of CLUBS) {
+            const val = obj[`club::${club}`];
+            if (val !== "" && val != null) {
+                const n = Number(val);
+                if (!isNaN(n) && n > 0) club_distances.push({ club, avg_yardage: n });
+            }
+        }
+
         const btn = form.querySelector("button[type=submit]");
         btn.disabled = true;
         btn.textContent = "Saving…";
         try {
-            const updated = await api("/users/me", {
-                method: "PATCH",
-                body: payload,
-            });
-            user = updated;
-            currentUser = updated;
+            const [updatedUser, updatedClubs] = await Promise.all([
+                api("/users/me", { method: "PATCH", body: profilePayload }),
+                api("/users/me/clubs", { method: "PUT", body: { club_distances } }),
+            ]);
+
+            user = { ...updatedUser, club_distances: updatedClubs };
+            currentUser = user;
+
             document.getElementById("profile-handicap").textContent =
-                updated.handicap != null ? updated.handicap : "—";
+                user.handicap != null ? user.handicap : "—";
             document.getElementById("profile-skill").textContent =
-                updated.skill_level
-                    ? updated.skill_level.charAt(0).toUpperCase() + updated.skill_level.slice(1)
+                user.skill_level
+                    ? user.skill_level.charAt(0).toUpperCase() + user.skill_level.slice(1)
                     : "—";
+            renderClubsView(updatedClubs);
+
             view.hidden = false;
             form.hidden = true;
         } catch (err) {
@@ -298,76 +333,3 @@ function renderClubsView(clubs) {
         .join("");
 }
 
-function bindClubsEdit(initialClubs) {
-    const view = document.getElementById("clubs-view");
-    const form = document.getElementById("clubs-form");
-    const grid = document.getElementById("clubs-edit-grid");
-    const editBtn = document.getElementById("clubs-edit");
-    const cancelBtn = document.getElementById("clubs-cancel");
-
-    const byClub = Object.fromEntries((initialClubs || []).map(c => [c.club, c.avg_yardage]));
-
-    const buildGrid = (values) => {
-        grid.innerHTML = CLUBS.map(club => {
-            const v = values[club] != null ? Math.round(values[club]) : "";
-            return `
-                <div class="club-input">
-                    <label>${club}</label>
-                    <div class="club-input-wrap">
-                        <input type="number" min="0" max="400" step="1" name="club::${club}" value="${v}" />
-                    </div>
-                </div>
-            `;
-        }).join("");
-    };
-
-    editBtn.addEventListener("click", () => {
-        buildGrid(byClub);
-        view.hidden = true;
-        form.hidden = false;
-        editBtn.hidden = true;
-    });
-
-    cancelBtn.addEventListener("click", () => {
-        view.hidden = false;
-        form.hidden = true;
-        editBtn.hidden = false;
-    });
-
-    form.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        hideError("profile-error");
-
-        const fd = new FormData(form);
-        const obj = Object.fromEntries(fd);
-        const club_distances = [];
-        for (const club of CLUBS) {
-            const val = obj[`club::${club}`];
-            if (val !== "" && val != null) {
-                const n = Number(val);
-                if (!isNaN(n) && n > 0) club_distances.push({ club, avg_yardage: n });
-            }
-        }
-
-        const btn = form.querySelector("button[type=submit]");
-        btn.disabled = true;
-        btn.textContent = "Saving…";
-        try {
-            const clubs = await api("/users/me/clubs", {
-                method: "PUT",
-                body: { club_distances },
-            });
-            renderClubsView(clubs);
-            Object.keys(byClub).forEach(k => delete byClub[k]);
-            clubs.forEach(c => (byClub[c.club] = c.avg_yardage));
-            view.hidden = false;
-            form.hidden = true;
-            editBtn.hidden = false;
-        } catch (err) {
-            showError("profile-error", err.message);
-        } finally {
-            btn.disabled = false;
-            btn.textContent = "Save";
-        }
-    });
-}
