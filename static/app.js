@@ -220,6 +220,7 @@ async function renderProfile() {
 
         renderClubsView(user.club_distances);
         bindClubsEdit(user.club_distances);
+        bindProfileEdit(user);
     } catch (err) {
         if (String(err.message).includes("401")) {
             clearToken();
@@ -227,6 +228,64 @@ async function renderProfile() {
         }
         showError("profile-error", err.message);
     }
+}
+
+function bindProfileEdit(initialUser) {
+    const view = document.getElementById("profile-view");
+    const form = document.getElementById("profile-form");
+    const editBtn = document.getElementById("profile-edit");
+    const cancelBtn = document.getElementById("profile-cancel");
+
+    let user = initialUser;
+
+    editBtn.addEventListener("click", () => {
+        form.querySelector('input[name=handicap]').value =
+            user.handicap != null ? user.handicap : "";
+        form.querySelector('select[name=skill_level]').value =
+            user.skill_level || "";
+        view.hidden = true;
+        form.hidden = false;
+    });
+
+    cancelBtn.addEventListener("click", () => {
+        view.hidden = false;
+        form.hidden = true;
+    });
+
+    form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        hideError("profile-error");
+        const fd = new FormData(form);
+        const obj = Object.fromEntries(fd);
+        const payload = {
+            handicap: obj.handicap === "" ? null : Number(obj.handicap),
+            skill_level: obj.skill_level || null,
+        };
+        const btn = form.querySelector("button[type=submit]");
+        btn.disabled = true;
+        btn.textContent = "Saving…";
+        try {
+            const updated = await api("/users/me", {
+                method: "PATCH",
+                body: payload,
+            });
+            user = updated;
+            currentUser = updated;
+            document.getElementById("profile-handicap").textContent =
+                updated.handicap != null ? updated.handicap : "—";
+            document.getElementById("profile-skill").textContent =
+                updated.skill_level
+                    ? updated.skill_level.charAt(0).toUpperCase() + updated.skill_level.slice(1)
+                    : "—";
+            view.hidden = false;
+            form.hidden = true;
+        } catch (err) {
+            showError("profile-error", err.message);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = "Save";
+        }
+    });
 }
 
 function renderClubsView(clubs) {

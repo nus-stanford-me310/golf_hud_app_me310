@@ -112,11 +112,35 @@
             </div>
             <p class="muted" id="profile-email">—</p>
 
-            <div class="chips">
-                <div class="chip"><span>Handicap</span><strong id="profile-handicap">—</strong></div>
-                <div class="chip"><span>Skill</span><strong id="profile-skill">—</strong></div>
-                <div class="chip"><span>User ID</span><strong id="profile-uid">—</strong></div>
+            <div id="profile-view">
+                <div class="chips">
+                    <div class="chip"><span>Handicap</span><strong id="profile-handicap">—</strong></div>
+                    <div class="chip"><span>Skill</span><strong id="profile-skill">—</strong></div>
+                    <div class="chip"><span>User ID</span><strong id="profile-uid">—</strong></div>
+                </div>
+                <button id="profile-edit" class="link" style="margin-top:0.5rem">Edit profile</button>
             </div>
+
+            <form id="profile-form" class="stack" hidden style="margin-top:1rem">
+                <label>
+                    Handicap
+                    <input type="number" name="handicap" step="0.1" min="-5" max="54" />
+                </label>
+                <label>
+                    Skill level
+                    <select name="skill_level">
+                        <option value="">— choose —</option>
+                        <option value="beginner">Beginner</option>
+                        <option value="intermediate">Intermediate</option>
+                        <option value="advanced">Advanced</option>
+                        <option value="pro">Pro</option>
+                    </select>
+                </label>
+                <div class="row">
+                    <button type="button" id="profile-cancel" class="secondary">Cancel</button>
+                    <button type="submit" class="primary">Save</button>
+                </div>
+            </form>
 
             <div class="row between" style="margin-top:1.5rem">
                 <h3>Club distances</h3>
