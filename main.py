@@ -208,17 +208,10 @@ def _deg_to_compass(deg: float) -> str:
 
 @app.get("/weather")
 def get_weather(lat: float, lon: float):
-    """Return current weather at (lat, lon) using OpenWeather under the hood.
+    """Return current weather at (lat, lon) using Open-Meteo (free, no API key).
     Response: {temp, wind_speed, wind_dir, units, source, fetched_at}.
     Cached server-side for 5 minutes per ~1km grid cell.
     """
-    api_key = os.getenv("OPENWEATHER_API_KEY")
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail="Weather not configured (OPENWEATHER_API_KEY missing)",
-        )
-
     cache_key = (round(lat, 2), round(lon, 2))
     now = time.time()
 
@@ -228,21 +221,27 @@ def get_weather(lat: float, lon: float):
             return cached[1]
 
     qs = urllib.parse.urlencode(
-        {"lat": lat, "lon": lon, "appid": api_key, "units": "imperial"}
+        {
+            "latitude": lat,
+            "longitude": lon,
+            "current": "temperature_2m,wind_speed_10m,wind_direction_10m",
+            "temperature_unit": "fahrenheit",
+            "wind_speed_unit": "mph",
+        }
     )
-    url = f"https://api.openweathermap.org/data/2.5/weather?{qs}"
+    url = f"https://api.open-meteo.com/v1/forecast?{qs}"
     try:
         with urllib.request.urlopen(url, timeout=8) as r:
             import json as _json
 
             data = _json.loads(r.read().decode("utf-8"))
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"OpenWeather error: {e}")
+        raise HTTPException(status_code=502, detail=f"Open-Meteo error: {e}")
 
-    temp = data.get("main", {}).get("temp")
-    wind = data.get("wind", {}) or {}
-    wind_speed = wind.get("speed")
-    wind_deg = wind.get("deg")
+    cur = data.get("current", {}) or {}
+    temp = cur.get("temperature_2m")
+    wind_speed = cur.get("wind_speed_10m")
+    wind_deg = cur.get("wind_direction_10m")
     wind_dir = _deg_to_compass(float(wind_deg)) if wind_deg is not None else None
 
     result = {
@@ -251,7 +250,7 @@ def get_weather(lat: float, lon: float):
         "wind_dir": wind_dir,
         "wind_deg": wind_deg,
         "units": "imperial",  # °F + mph
-        "source": "openweather",
+        "source": "open-meteo",
         "fetched_at": datetime.utcnow().isoformat() + "Z",
     }
 
