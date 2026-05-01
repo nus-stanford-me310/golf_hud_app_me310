@@ -102,6 +102,12 @@ class UpdateHoleRequest(BaseModel):
     hole_id: int
 
 
+class ClubRecommendationInfo(BaseModel):
+    club: str
+    dynamic_yardage: Optional[float] = None
+    confidence: Optional[float] = None
+
+
 class ShotRequest(BaseModel):
     game_id: int
     hole_id: int
@@ -110,6 +116,7 @@ class ShotRequest(BaseModel):
     distance: Optional[float] = None  # yards travelled this shot
     ball_traj: Optional[str] = None
     weather: Optional[WeatherInfo] = None
+    recommendation: Optional[ClubRecommendationInfo] = None
 
 
 class ShotResponse(BaseModel):
@@ -124,6 +131,23 @@ class ShotResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class RecommendRequest(BaseModel):
+    user_id: int
+    hole_id: int
+    distance_to_pin: Optional[float] = None  # yards remaining to the pin
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+
+
+class RecommendResponse(BaseModel):
+    club: str
+    dynamic_yardage: Optional[float] = None
+    confidence: Optional[float] = None
+    reasoning: Optional[str] = None
+    weather_used: Optional["WeatherInfo"] = None
+    history_count: int = 0
 
 
 class ActiveUserResponse(BaseModel):

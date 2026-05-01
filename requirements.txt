@@ -6,3 +6,4 @@ python-jose[cryptography]>=3.3.0
 bcrypt>=4.1.0
 python-multipart>=0.0.9
 psycopg2-binary>=2.9.9
+openai>=1.30.0

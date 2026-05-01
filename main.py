@@ -15,7 +15,17 @@ from datetime import datetime
 from typing import Optional
 
 from database import Base, SessionLocal, engine, get_db
-from models import ActiveUser, Course, Game, Hole, Shot, User, UserClubDistance, Weather
+from models import (
+    ActiveUser,
+    ClubRecommendation,
+    Course,
+    Game,
+    Hole,
+    Shot,
+    User,
+    UserClubDistance,
+    Weather,
+)
 from schemas import (
     SignupRequest,
     LoginRequest,
@@ -32,6 +42,9 @@ from schemas import (
     ShotResponse,
     CourseResponse,
     HoleResponse,
+    RecommendRequest,
+    RecommendResponse,
+    WeatherInfo,
 )
 from auth import (
     hash_password,
@@ -353,6 +366,18 @@ def log_shot(req: ShotRequest, db: Session = Depends(get_db)):
         ball_traj=req.ball_traj,
     )
     db.add(shot)
+    db.flush()
+
+    # Persist the recommendation that drove this shot, if supplied.
+    if req.recommendation is not None:
+        rec = ClubRecommendation(
+            shot_id=shot.shot_id,
+            club=req.recommendation.club,
+            dynamic_yardage=req.recommendation.dynamic_yardage,
+            confidence=req.recommendation.confidence,
+        )
+        db.add(rec)
+
     db.commit()
     db.refresh(shot)
     return shot
@@ -365,6 +390,168 @@ def list_shots(game_id: int, db: Session = Depends(get_db)):
         .filter(Shot.game_id == game_id)
         .order_by(Shot.shot_id)
         .all()
+    )
+
+
+# =========================================================================
+# CLUB RECOMMENDATION (OpenAI-powered)
+# Assembles full context — user's typical club distances, every prior shot
+# this user has logged at this hole, and current weather — and asks GPT-4o
+# for a structured club recommendation. Result is *not* persisted here; the
+# caller embeds it in the next POST /shots so it gets saved alongside the
+# shot it belongs to.
+# =========================================================================
+
+
+_OPENAI_CLIENT = None  # lazy
+
+
+def _openai_client():
+    global _OPENAI_CLIENT
+    if _OPENAI_CLIENT is None:
+        from openai import OpenAI
+
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise HTTPException(
+                status_code=503,
+                detail="OPENAI_API_KEY not set on the server",
+            )
+        _OPENAI_CLIENT = OpenAI(api_key=api_key)
+    return _OPENAI_CLIENT
+
+
+@app.post("/recommend-club", response_model=RecommendResponse)
+def recommend_club(req: RecommendRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.user_id == req.user_id).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Player profile
+    clubs = list(user.club_distances)
+    profile_lines = []
+    if user.handicap is not None:
+        profile_lines.append(f"Handicap: {user.handicap}")
+    if user.skill_level:
+        profile_lines.append(f"Skill: {user.skill_level}")
+    if clubs:
+        profile_lines.append("Typical carry distances (yards):")
+        for c in sorted(clubs, key=lambda x: -x.avg_yardage):
+            profile_lines.append(f"  - {c.club}: {int(c.avg_yardage)}")
+    else:
+        profile_lines.append("Typical carry distances: (not provided)")
+
+    # Hole context
+    hole = db.query(Hole).filter(Hole.hole_id == req.hole_id).first()
+    hole_lines = [f"Hole id: {req.hole_id}"]
+    if hole is not None:
+        if hole.par is not None:
+            hole_lines.append(f"Par: {hole.par}")
+        if hole.yardage is not None:
+            hole_lines.append(f"Posted yardage: {hole.yardage}")
+    if req.distance_to_pin is not None:
+        hole_lines.append(f"Distance remaining to pin: {int(req.distance_to_pin)} yd")
+
+    # Shot history at this hole, across all games for this user, with the
+    # recommendation that drove each shot if we have one.
+    history = (
+        db.query(Shot)
+        .join(Game, Shot.game_id == Game.game_id)
+        .filter(Game.user_id == req.user_id, Shot.hole_id == req.hole_id)
+        .order_by(Shot.shot_id.desc())
+        .limit(20)
+        .all()
+    )
+    history_lines = []
+    for s in reversed(history):
+        rec_part = ""
+        if s.recommendation is not None:
+            rec_part = f", recommended {s.recommendation.club}"
+            if s.recommendation.confidence is not None:
+                rec_part += f" (conf {s.recommendation.confidence:.2f})"
+        dist_part = f"{int(s.distance)} yd" if s.distance is not None else "distance unknown"
+        history_lines.append(
+            f"  - shot {s.shot_no}: {dist_part}{rec_part}"
+        )
+
+    # Weather: prefer caller-supplied lat/lon (live); else fall back to most
+    # recent weather row attached to this user's shots; else skip.
+    weather_used: Optional[WeatherInfo] = None
+    if req.lat is not None and req.lon is not None:
+        try:
+            w = get_weather(req.lat, req.lon)  # reuses cache + Open-Meteo
+            weather_used = WeatherInfo(
+                temp=w.get("temp"),
+                wind_speed=w.get("wind_speed"),
+                wind_dir=w.get("wind_dir"),
+            )
+        except Exception:
+            weather_used = None
+
+    weather_line = "Weather: not provided"
+    if weather_used is not None:
+        bits = []
+        if weather_used.temp is not None:
+            bits.append(f"{weather_used.temp:.0f}°F")
+        if weather_used.wind_speed is not None:
+            bits.append(f"wind {weather_used.wind_speed:.0f} mph")
+        if weather_used.wind_dir:
+            bits.append(f"from {weather_used.wind_dir}")
+        weather_line = "Weather: " + ", ".join(bits)
+
+    # Available club names — keep recommendations to clubs the player owns.
+    club_names = ", ".join(c.club for c in clubs) or "(unknown — recommend a generic club)"
+
+    prompt = (
+        "You are an expert golf caddie. Recommend the best club for the "
+        "player's NEXT shot, given their history on this hole, their typical "
+        "distances, and the current conditions.\n\n"
+        f"PLAYER:\n" + "\n".join(profile_lines) + "\n\n"
+        f"HOLE:\n" + "\n".join(hole_lines) + "\n\n"
+        f"CONDITIONS:\n{weather_line}\n\n"
+        f"PRIOR SHOTS BY THIS PLAYER ON THIS HOLE "
+        f"({len(history_lines)}):\n" +
+        ("\n".join(history_lines) if history_lines else "  (none)") + "\n\n"
+        f"AVAILABLE CLUBS: {club_names}\n\n"
+        "Respond ONLY with a single JSON object — no prose, no markdown — "
+        "with these exact fields:\n"
+        '{"club": "<name from AVAILABLE CLUBS>", '
+        '"dynamic_yardage": <effective yards accounting for wind/elevation>, '
+        '"confidence": <0..1>, '
+        '"reasoning": "<one short sentence>"}'
+    )
+
+    try:
+        client = _openai_client()
+        completion = client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            temperature=0.4,
+            messages=[
+                {"role": "system",
+                 "content": "You are a concise, expert golf caddie. Output JSON only."},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        text = completion.choices[0].message.content or "{}"
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"OpenAI error: {e}")
+
+    import json as _json
+    try:
+        parsed = _json.loads(text)
+    except _json.JSONDecodeError:
+        raise HTTPException(status_code=502, detail=f"Bad JSON from model: {text[:200]}")
+
+    return RecommendResponse(
+        club=str(parsed.get("club", "")),
+        dynamic_yardage=parsed.get("dynamic_yardage"),
+        confidence=parsed.get("confidence"),
+        reasoning=parsed.get("reasoning"),
+        weather_used=weather_used,
+        history_count=len(history_lines),
     )
 
 
