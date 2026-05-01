@@ -54,6 +54,56 @@ class UpdateClubsRequest(BaseModel):
     club_distances: List[ClubDistance]
 
 
+class WeatherInfo(BaseModel):
+    temp: Optional[float] = None
+    wind_speed: Optional[float] = None
+    wind_dir: Optional[str] = None
+
+
+class GameStartRequest(BaseModel):
+    user_id: int
+    starting_hole_id: Optional[int] = None
+
+
+class GameResponse(BaseModel):
+    game_id: int
+    user_id: int
+    hole_id: Optional[int] = None
+    start_time: datetime
+    status: str
+
+    class Config:
+        from_attributes = True
+
+
+class UpdateHoleRequest(BaseModel):
+    hole_id: int
+
+
+class ShotRequest(BaseModel):
+    game_id: int
+    hole_id: int
+    shot_no: int
+    gps_loc: Optional[str] = None  # "lat,lng"
+    distance: Optional[float] = None  # yards travelled this shot
+    ball_traj: Optional[str] = None
+    weather: Optional[WeatherInfo] = None
+
+
+class ShotResponse(BaseModel):
+    shot_id: int
+    game_id: int
+    hole_id: Optional[int] = None
+    shot_no: int
+    gps_loc: Optional[str] = None
+    distance: Optional[float] = None
+    ball_traj: Optional[str] = None
+    weather_id: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
 class ActiveUserResponse(BaseModel):
     user_id: Optional[int] = None
     name: Optional[str] = None

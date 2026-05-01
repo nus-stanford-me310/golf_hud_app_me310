@@ -7,9 +7,10 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
 from datetime import datetime
+from typing import Optional
 
 from database import Base, engine, get_db
-from models import ActiveUser, User, UserClubDistance
+from models import ActiveUser, Game, Shot, User, UserClubDistance, Weather
 from schemas import (
     SignupRequest,
     LoginRequest,
@@ -19,6 +20,11 @@ from schemas import (
     UpdateClubsRequest,
     ClubDistance,
     ActiveUserResponse,
+    GameStartRequest,
+    GameResponse,
+    UpdateHoleRequest,
+    ShotRequest,
+    ShotResponse,
 )
 from auth import (
     hash_password,
@@ -136,6 +142,114 @@ def update_clubs(
     db.commit()
     db.refresh(current_user)
     return current_user.club_distances
+
+
+# =========================================================================
+# GAME / SHOT ENDPOINTS
+# Unity HUD calls these during a round. Auth is intentionally lenient — Unity
+# trusts the user_id it learned from /active-user. Tighten later if needed.
+# =========================================================================
+
+
+@app.post("/games/start", response_model=GameResponse)
+def start_game(req: GameStartRequest, db: Session = Depends(get_db)):
+    """Start a new active game for a user. Marks any existing active games
+    abandoned so a player only ever has one active game at a time."""
+    user = db.query(User).filter(User.user_id == req.user_id).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    db.query(Game).filter(
+        Game.user_id == req.user_id, Game.status == "active"
+    ).update({"status": "abandoned"})
+
+    game = Game(
+        user_id=req.user_id,
+        hole_id=req.starting_hole_id,
+        start_time=datetime.utcnow(),
+        status="active",
+    )
+    db.add(game)
+    db.commit()
+    db.refresh(game)
+    return game
+
+
+@app.get("/games/active/{user_id}", response_model=Optional[GameResponse])
+def active_game(user_id: int, db: Session = Depends(get_db)):
+    return (
+        db.query(Game)
+        .filter(Game.user_id == user_id, Game.status == "active")
+        .order_by(Game.start_time.desc())
+        .first()
+    )
+
+
+@app.patch("/games/{game_id}/hole", response_model=GameResponse)
+def set_current_hole(
+    game_id: int, req: UpdateHoleRequest, db: Session = Depends(get_db)
+):
+    g = db.query(Game).filter(Game.game_id == game_id).first()
+    if g is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+    g.hole_id = req.hole_id
+    db.commit()
+    db.refresh(g)
+    return g
+
+
+@app.post("/games/{game_id}/end", response_model=GameResponse)
+def end_game(game_id: int, db: Session = Depends(get_db)):
+    g = db.query(Game).filter(Game.game_id == game_id).first()
+    if g is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+    g.status = "ended"
+    db.commit()
+    db.refresh(g)
+    return g
+
+
+@app.post("/shots", response_model=ShotResponse)
+def log_shot(req: ShotRequest, db: Session = Depends(get_db)):
+    """Record a shot. Optionally creates a Weather row if weather supplied."""
+    g = db.query(Game).filter(Game.game_id == req.game_id).first()
+    if g is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    weather_id = None
+    if req.weather is not None:
+        w = Weather(
+            temp=req.weather.temp,
+            wind_speed=req.weather.wind_speed,
+            wind_dir=req.weather.wind_dir,
+        )
+        db.add(w)
+        db.flush()
+        weather_id = w.weather_id
+
+    shot = Shot(
+        game_id=req.game_id,
+        hole_id=req.hole_id,
+        weather_id=weather_id,
+        shot_no=req.shot_no,
+        gps_loc=req.gps_loc,
+        distance=req.distance,
+        ball_traj=req.ball_traj,
+    )
+    db.add(shot)
+    db.commit()
+    db.refresh(shot)
+    return shot
+
+
+@app.get("/games/{game_id}/shots", response_model=list[ShotResponse])
+def list_shots(game_id: int, db: Session = Depends(get_db)):
+    return (
+        db.query(Shot)
+        .filter(Shot.game_id == game_id)
+        .order_by(Shot.shot_id)
+        .all()
+    )
 
 
 @app.post("/active-user", response_model=ActiveUserResponse)
