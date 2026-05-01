@@ -54,6 +54,28 @@ class UpdateClubsRequest(BaseModel):
     club_distances: List[ClubDistance]
 
 
+class HoleResponse(BaseModel):
+    hole_id: int
+    course_id: int
+    number: int
+    par: Optional[int] = None
+    yardage: Optional[int] = None
+    hazard_map: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class CourseResponse(BaseModel):
+    course_id: int
+    name: str
+    location: Optional[str] = None
+    holes: List[HoleResponse] = []
+
+    class Config:
+        from_attributes = True
+
+
 class WeatherInfo(BaseModel):
     temp: Optional[float] = None
     wind_speed: Optional[float] = None

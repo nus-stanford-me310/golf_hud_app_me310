@@ -14,8 +14,8 @@ import urllib.request
 from datetime import datetime
 from typing import Optional
 
-from database import Base, engine, get_db
-from models import ActiveUser, Game, Shot, User, UserClubDistance, Weather
+from database import Base, SessionLocal, engine, get_db
+from models import ActiveUser, Course, Game, Hole, Shot, User, UserClubDistance, Weather
 from schemas import (
     SignupRequest,
     LoginRequest,
@@ -30,6 +30,8 @@ from schemas import (
     UpdateHoleRequest,
     ShotRequest,
     ShotResponse,
+    CourseResponse,
+    HoleResponse,
 )
 from auth import (
     hash_password,
@@ -39,6 +41,15 @@ from auth import (
 )
 
 Base.metadata.create_all(bind=engine)
+
+# Seed Stanford Golf Course + holes idempotently on every boot.
+from seed_data import seed as _seed  # noqa: E402
+
+with SessionLocal() as _seed_db:
+    try:
+        _seed(_seed_db)
+    except Exception as _e:
+        print(f"[seed] skipped: {_e}")
 
 app = FastAPI(title="GolfHUD Companion API")
 
@@ -147,6 +158,34 @@ def update_clubs(
     db.commit()
     db.refresh(current_user)
     return current_user.club_distances
+
+
+# =========================================================================
+# COURSE / HOLE READ ENDPOINTS
+# =========================================================================
+
+
+@app.get("/courses", response_model=list[CourseResponse])
+def list_courses(db: Session = Depends(get_db)):
+    return db.query(Course).all()
+
+
+@app.get("/courses/{course_id}", response_model=CourseResponse)
+def get_course(course_id: int, db: Session = Depends(get_db)):
+    c = db.query(Course).filter(Course.course_id == course_id).first()
+    if c is None:
+        raise HTTPException(status_code=404, detail="Course not found")
+    return c
+
+
+@app.get("/courses/{course_id}/holes", response_model=list[HoleResponse])
+def list_holes(course_id: int, db: Session = Depends(get_db)):
+    return (
+        db.query(Hole)
+        .filter(Hole.course_id == course_id)
+        .order_by(Hole.number)
+        .all()
+    )
 
 
 # =========================================================================
