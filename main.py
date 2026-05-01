@@ -6,6 +6,11 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
+import os
+import threading
+import time
+import urllib.parse
+import urllib.request
 from datetime import datetime
 from typing import Optional
 
@@ -142,6 +147,79 @@ def update_clubs(
     db.commit()
     db.refresh(current_user)
     return current_user.club_distances
+
+
+# =========================================================================
+# WEATHER PROXY
+# Hides OpenWeather API key from clients. Caches per location for 5 minutes
+# so the upstream API is hit at most once per (rounded) GPS coordinate per
+# 5-min window, no matter how many devices ask.
+# =========================================================================
+
+_WEATHER_CACHE: dict[tuple, tuple[float, dict]] = {}
+_WEATHER_CACHE_LOCK = threading.Lock()
+_WEATHER_TTL_SECONDS = 5 * 60
+_DEG_TO_COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+
+
+def _deg_to_compass(deg: float) -> str:
+    idx = int((deg + 22.5) // 45) % 8
+    return _DEG_TO_COMPASS[idx]
+
+
+@app.get("/weather")
+def get_weather(lat: float, lon: float):
+    """Return current weather at (lat, lon) using OpenWeather under the hood.
+    Response: {temp, wind_speed, wind_dir, units, source, fetched_at}.
+    Cached server-side for 5 minutes per ~1km grid cell.
+    """
+    api_key = os.getenv("OPENWEATHER_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Weather not configured (OPENWEATHER_API_KEY missing)",
+        )
+
+    cache_key = (round(lat, 2), round(lon, 2))
+    now = time.time()
+
+    with _WEATHER_CACHE_LOCK:
+        cached = _WEATHER_CACHE.get(cache_key)
+        if cached and now - cached[0] < _WEATHER_TTL_SECONDS:
+            return cached[1]
+
+    qs = urllib.parse.urlencode(
+        {"lat": lat, "lon": lon, "appid": api_key, "units": "imperial"}
+    )
+    url = f"https://api.openweathermap.org/data/2.5/weather?{qs}"
+    try:
+        with urllib.request.urlopen(url, timeout=8) as r:
+            import json as _json
+
+            data = _json.loads(r.read().decode("utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"OpenWeather error: {e}")
+
+    temp = data.get("main", {}).get("temp")
+    wind = data.get("wind", {}) or {}
+    wind_speed = wind.get("speed")
+    wind_deg = wind.get("deg")
+    wind_dir = _deg_to_compass(float(wind_deg)) if wind_deg is not None else None
+
+    result = {
+        "temp": temp,
+        "wind_speed": wind_speed,
+        "wind_dir": wind_dir,
+        "wind_deg": wind_deg,
+        "units": "imperial",  # °F + mph
+        "source": "openweather",
+        "fetched_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+    with _WEATHER_CACHE_LOCK:
+        _WEATHER_CACHE[cache_key] = (now, result)
+
+    return result
 
 
 # =========================================================================
