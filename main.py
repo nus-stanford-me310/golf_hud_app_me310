@@ -531,23 +531,40 @@ def recommend_club(req: RecommendRequest, db: Session = Depends(get_db)):
     # Available club names — keep recommendations to clubs the player owns.
     club_names = ", ".join(c.club for c in clubs) or "(unknown — recommend a generic club)"
 
+    history_block = "\n".join(history_lines) if history_lines else "  (none)"
     prompt = (
-        "You are an expert golf caddie. Recommend the best club for the "
-        "player's NEXT shot, given their history on this hole, their typical "
-        "distances, and the current conditions.\n\n"
-        f"PLAYER:\n" + "\n".join(profile_lines) + "\n\n"
-        f"HOLE:\n" + "\n".join(hole_lines) + "\n\n"
-        f"CONDITIONS:\n{weather_line}\n\n"
-        f"PRIOR SHOTS BY THIS PLAYER ON THIS HOLE "
-        f"({len(history_lines)}):\n" +
-        ("\n".join(history_lines) if history_lines else "  (none)") + "\n\n"
-        f"AVAILABLE CLUBS: {club_names}\n\n"
-        "Respond ONLY with a single JSON object — no prose, no markdown — "
-        "with these exact fields:\n"
-        '{"club": "<name from AVAILABLE CLUBS>", '
-        '"dynamic_yardage": <effective yards accounting for wind/elevation>, '
-        '"confidence": <0..1>, '
-        '"reasoning": "<one short sentence>"}'
+        "You are an expert golf caddie recommending the best club for the "
+        "player's NEXT shot.\n\n"
+        "Recommend one club using:\n"
+        "- Player-specific club distances and tendencies.\n"
+        "- Prior shots by this player on this hole.\n"
+        "- Current conditions such as wind, elevation, temperature, lie, and hazards.\n"
+        "- The desired target distance and safest landing area.\n\n"
+        "PLAYER PROFILE:\n" + "\n".join(profile_lines) + "\n\n"
+        "HOLE CONTEXT:\n" + "\n".join(hole_lines) + "\n\n"
+        f"CURRENT CONDITIONS:\n{weather_line}\n\n"
+        f"PRIOR SHOTS BY THIS PLAYER ON THIS HOLE ({len(history_lines)}):\n"
+        f"{history_block}\n\n"
+        f"AVAILABLE CLUBS:\n{club_names}\n\n"
+        "Rules:\n"
+        "- Choose exactly one club from AVAILABLE CLUBS.\n"
+        '- The "club" value must exactly match one available club name.\n'
+        '- "dynamic_yardage" must be the effective playing distance after '
+        "wind/elevation/condition adjustments.\n"
+        "- Use history to adjust for this player's actual performance, but "
+        "ignore clear outliers.\n"
+        "- Favor the club with the best balance of distance control and risk "
+        "reduction.\n"
+        "- If evidence is weak or conflicting, lower confidence but still "
+        "make a recommendation.\n"
+        "- Return only valid JSON. No prose, no markdown, no extra keys.\n\n"
+        "Return exactly this JSON structure:\n"
+        "{\n"
+        '  "club": "<exact club name from AVAILABLE CLUBS>",\n'
+        '  "dynamic_yardage": <number>,\n'
+        '  "confidence": <number from 0 to 1>,\n'
+        '  "reasoning": "<one short sentence>"\n'
+        "}"
     )
 
     try:
