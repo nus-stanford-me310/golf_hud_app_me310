@@ -588,6 +588,21 @@ def recommend_club(req: RecommendRequest, db: Session = Depends(get_db)):
         "miss pattern, and tendencies.\n"
         "- Exclude obvious outliers such as mishits, penalties, recovery "
         "shots, or abnormal lies unless they reveal a repeated pattern.\n"
+        "- The chosen club's expected carry distance MUST be close to the "
+        "distance to the pin. Never recommend a club that would fly more "
+        "than ~15 yards past the target unless the player has no shorter "
+        "club in their bag that can reach the target.\n"
+        "- If distance to pin is under 100 yards, recommend a wedge "
+        "(LW / SW / GW / PW) or 9 iron. Do NOT recommend a wood, hybrid, "
+        "or long iron in this range.\n"
+        "- If distance to pin is 100–135 yards, recommend a wedge or "
+        "short iron (PW, 9 iron, 8 iron). Do NOT recommend a wood or "
+        "hybrid in this range.\n"
+        "- If distance to pin is 135–185 yards, recommend a mid iron "
+        "(7, 6, 5, 4 iron) or hybrid sized to the gap. Avoid woods unless "
+        "the iron carry is too short.\n"
+        "- If distance to pin is over ~200 yards, woods or driver are "
+        "appropriate.\n"
         "- Start dynamic_yardage from this player's historical distance "
         "with the chosen club.\n"
         "- Adjust dynamic_yardage for:\n"
@@ -644,7 +659,11 @@ def recommend_club(req: RecommendRequest, db: Session = Depends(get_db)):
         completion = client.chat.completions.create(
             model="gpt-4o-mini",
             response_format={"type": "json_object"},
-            temperature=0.4,
+            # Lowered from 0.4 → 0.2: club selection is a near-deterministic
+            # task once distance + history + conditions are fixed. Higher
+            # temperature was producing wrong-club outliers (e.g. 5 Wood
+            # recommended at 50 yd, which overshoots the green by 140 yd).
+            temperature=0.2,
             messages=[
                 {"role": "system",
                  "content": "You are a concise, expert golf caddie. Output JSON only."},
