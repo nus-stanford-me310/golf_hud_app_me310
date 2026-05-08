@@ -523,6 +523,18 @@ def recommend_club(req: RecommendRequest, db: Session = Depends(get_db)):
 
     try:
         client = _openai_client()
+
+        # Log the full prompt so we can audit what GPT actually sees on each
+        # call. Render captures stdout — visible in the service Logs tab.
+        print("=" * 60, flush=True)
+        print(
+            f"[recommend-club] user={req.user_id} hole={req.hole_id} "
+            f"d2pin={req.distance_to_pin} lat={req.lat} lon={req.lon}",
+            flush=True,
+        )
+        print("[recommend-club] --- PROMPT ---", flush=True)
+        print(prompt, flush=True)
+
         completion = client.chat.completions.create(
             model="gpt-4o-mini",
             response_format={"type": "json_object"},
@@ -534,9 +546,14 @@ def recommend_club(req: RecommendRequest, db: Session = Depends(get_db)):
             ],
         )
         text = completion.choices[0].message.content or "{}"
+
+        print("[recommend-club] --- RESPONSE ---", flush=True)
+        print(text, flush=True)
+        print("=" * 60, flush=True)
     except HTTPException:
         raise
     except Exception as e:
+        print(f"[recommend-club] OpenAI error: {e}", flush=True)
         raise HTTPException(status_code=502, detail=f"OpenAI error: {e}")
 
     import json as _json
