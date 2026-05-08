@@ -85,6 +85,7 @@ class Weather(Base):
 
     weather_id = Column(Integer, primary_key=True, index=True)
     temp = Column(Float, nullable=True)
+    humidity = Column(Float, nullable=True)  # relative humidity, percent
     wind_speed = Column(Float, nullable=True)
     wind_dir = Column(String, nullable=True)
 

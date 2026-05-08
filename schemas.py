@@ -78,6 +78,7 @@ class CourseResponse(BaseModel):
 
 class WeatherInfo(BaseModel):
     temp: Optional[float] = None
+    humidity: Optional[float] = None  # relative humidity, percent (0..100)
     wind_speed: Optional[float] = None
     wind_dir: Optional[str] = None
 

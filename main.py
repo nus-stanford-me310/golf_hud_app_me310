@@ -55,6 +55,29 @@ from auth import (
 
 Base.metadata.create_all(bind=engine)
 
+# Lightweight, idempotent column-level migrations. SQLAlchemy's create_all
+# only creates missing tables — it won't ALTER an existing table to add a
+# newly declared column. We do those by hand here so a redeploy on Render
+# (Postgres) picks up new columns without losing data, and a fresh local
+# SQLite run is unaffected (the column already exists from create_all).
+def _ensure_columns():
+    from sqlalchemy import text as _sql_text
+    statements = [
+        # Added 2026-05: humidity in weather rows.
+        "ALTER TABLE weather ADD COLUMN IF NOT EXISTS humidity FLOAT",
+    ]
+    with engine.begin() as conn:
+        for stmt in statements:
+            try:
+                conn.execute(_sql_text(stmt))
+            except Exception as _e:
+                # SQLite < 3.35 lacks IF NOT EXISTS; if column already exists
+                # the ALTER will also fail there. Both are fine to ignore.
+                print(f"[migrate] skipped '{stmt}': {_e}")
+
+
+_ensure_columns()
+
 # Seed Stanford Golf Course + holes idempotently on every boot.
 from seed_data import seed as _seed  # noqa: E402
 
@@ -237,7 +260,7 @@ def get_weather(lat: float, lon: float):
         {
             "latitude": lat,
             "longitude": lon,
-            "current": "temperature_2m,wind_speed_10m,wind_direction_10m",
+            "current": "temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m",
             "temperature_unit": "fahrenheit",
             "wind_speed_unit": "mph",
         }
@@ -253,12 +276,14 @@ def get_weather(lat: float, lon: float):
 
     cur = data.get("current", {}) or {}
     temp = cur.get("temperature_2m")
+    humidity = cur.get("relative_humidity_2m")
     wind_speed = cur.get("wind_speed_10m")
     wind_deg = cur.get("wind_direction_10m")
     wind_dir = _deg_to_compass(float(wind_deg)) if wind_deg is not None else None
 
     result = {
         "temp": temp,
+        "humidity": humidity,
         "wind_speed": wind_speed,
         "wind_dir": wind_dir,
         "wind_deg": wind_deg,
@@ -349,6 +374,7 @@ def log_shot(req: ShotRequest, db: Session = Depends(get_db)):
     if req.weather is not None:
         w = Weather(
             temp=req.weather.temp,
+            humidity=req.weather.humidity,
             wind_speed=req.weather.wind_speed,
             wind_dir=req.weather.wind_dir,
         )
@@ -482,6 +508,7 @@ def recommend_club(req: RecommendRequest, db: Session = Depends(get_db)):
             w = get_weather(req.lat, req.lon)  # reuses cache + Open-Meteo
             weather_used = WeatherInfo(
                 temp=w.get("temp"),
+                humidity=w.get("humidity"),
                 wind_speed=w.get("wind_speed"),
                 wind_dir=w.get("wind_dir"),
             )
@@ -493,6 +520,8 @@ def recommend_club(req: RecommendRequest, db: Session = Depends(get_db)):
         bits = []
         if weather_used.temp is not None:
             bits.append(f"{weather_used.temp:.0f}°F")
+        if weather_used.humidity is not None:
+            bits.append(f"humidity {weather_used.humidity:.0f}%")
         if weather_used.wind_speed is not None:
             bits.append(f"wind {weather_used.wind_speed:.0f} mph")
         if weather_used.wind_dir:
