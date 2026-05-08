@@ -478,9 +478,10 @@ def recommend_club(req: RecommendRequest, db: Session = Depends(get_db)):
     if req.distance_to_pin is not None:
         hole_lines.append(f"Distance remaining to pin: {int(req.distance_to_pin)} yd")
 
-    # Shot history at this hole, across all games for this user, with the
-    # recommendation that drove each shot if we have one.
-    history = (
+    # Shot history at THIS hole (most context-specific signal: same target,
+    # similar lies, same hazards). Pulled across every game this user has
+    # ever played, with the recommendation that drove each shot if any.
+    hole_history = (
         db.query(Shot)
         .join(Game, Shot.game_id == Game.game_id)
         .filter(Game.user_id == req.user_id, Shot.hole_id == req.hole_id)
@@ -488,16 +489,39 @@ def recommend_club(req: RecommendRequest, db: Session = Depends(get_db)):
         .limit(20)
         .all()
     )
-    history_lines = []
-    for s in reversed(history):
+    hole_history_lines = []
+    for s in reversed(hole_history):
         rec_part = ""
         if s.recommendation is not None:
             rec_part = f", recommended {s.recommendation.club}"
             if s.recommendation.confidence is not None:
                 rec_part += f" (conf {s.recommendation.confidence:.2f})"
         dist_part = f"{int(s.distance)} yd" if s.distance is not None else "distance unknown"
-        history_lines.append(
+        hole_history_lines.append(
             f"  - shot {s.shot_no}: {dist_part}{rec_part}"
+        )
+
+    # General shot history — every other hole this user has ever played,
+    # used by GPT to estimate how far this specific player typically hits
+    # each club (overrides the generic AVAILABLE CLUBS distances when there
+    # is enough signal). Excludes shots on the current hole (those are
+    # already in hole_history above) so we don't double-count.
+    general_history = (
+        db.query(Shot)
+        .join(Game, Shot.game_id == Game.game_id)
+        .filter(Game.user_id == req.user_id, Shot.hole_id != req.hole_id)
+        .order_by(Shot.shot_id.desc())
+        .limit(40)
+        .all()
+    )
+    general_history_lines = []
+    for s in reversed(general_history):
+        rec_part = ""
+        if s.recommendation is not None:
+            rec_part = f", recommended {s.recommendation.club}"
+        dist_part = f"{int(s.distance)} yd" if s.distance is not None else "distance unknown"
+        general_history_lines.append(
+            f"  - hole {s.hole_id}, shot {s.shot_no}: {dist_part}{rec_part}"
         )
 
     # Weather: prefer caller-supplied lat/lon (live); else fall back to most
@@ -531,37 +555,56 @@ def recommend_club(req: RecommendRequest, db: Session = Depends(get_db)):
     # Available club names — keep recommendations to clubs the player owns.
     club_names = ", ".join(c.club for c in clubs) or "(unknown — recommend a generic club)"
 
-    history_block = "\n".join(history_lines) if history_lines else "  (none)"
+    hole_history_block = (
+        "\n".join(hole_history_lines) if hole_history_lines else "  (none)"
+    )
+    general_history_block = (
+        "\n".join(general_history_lines) if general_history_lines else "  (none)"
+    )
+
     prompt = (
         "You are an expert golf caddie recommending the best club for the "
         "player's NEXT shot.\n\n"
         "Recommend one club using:\n"
-        "- Player-specific club distances and tendencies.\n"
-        "- Prior shots by this player on this hole.\n"
-        "- Current conditions such as wind, elevation, temperature, lie, and hazards.\n"
-        "- The desired target distance and safest landing area.\n\n"
+        "- The player's typical club distances.\n"
+        "- The player's prior shots on this same hole.\n"
+        "- The player's general prior shot history across other holes.\n"
+        "- Current shot context such as distance to target, wind, elevation, "
+        "temperature, lie, and hazards.\n"
+        "- The safest landing area for the next shot.\n\n"
         "PLAYER PROFILE:\n" + "\n".join(profile_lines) + "\n\n"
         "HOLE CONTEXT:\n" + "\n".join(hole_lines) + "\n\n"
         f"CURRENT CONDITIONS:\n{weather_line}\n\n"
-        f"PRIOR SHOTS BY THIS PLAYER ON THIS HOLE ({len(history_lines)}):\n"
-        f"{history_block}\n\n"
+        "PRIOR SHOTS BY THIS PLAYER ON THIS HOLE:\n"
+        f"{hole_history_block}\n\n"
+        "GENERAL PRIOR SHOTS BY THIS PLAYER:\n"
+        f"{general_history_block}\n\n"
         f"AVAILABLE CLUBS:\n{club_names}\n\n"
         "Rules:\n"
         "- Choose exactly one club from AVAILABLE CLUBS.\n"
         '- The "club" value must exactly match one available club name.\n'
-        '- "dynamic_yardage" must be the effective playing distance after '
-        "wind/elevation/condition adjustments.\n"
-        "- Use history to adjust for this player's actual performance, but "
-        "ignore clear outliers.\n"
-        "- Favor the club with the best balance of distance control and risk "
-        "reduction.\n"
+        "- Use prior shots on this hole first because they are most "
+        "context-specific.\n"
+        "- Use general prior shots second to estimate the player's normal "
+        "distance with each club.\n"
+        "- Ignore clear outlier shots such as mishits, penalties, or "
+        "abnormal lies unless they show a repeated pattern.\n"
+        '- "dynamic_yardage" means the expected distance this specific '
+        "player will hit the recommended club on this shot.\n"
+        "- dynamic_yardage must be based on the player's own history, not "
+        "generic club distances.\n"
+        "- Adjust dynamic_yardage for current conditions such as wind, "
+        "elevation, temperature, lie, and fatigue if provided.\n"
+        "- Favor the club with the best balance of distance fit, player "
+        "consistency, and hazard avoidance.\n"
         "- If evidence is weak or conflicting, lower confidence but still "
         "make a recommendation.\n"
         "- Return only valid JSON. No prose, no markdown, no extra keys.\n\n"
         "Return exactly this JSON structure:\n"
         "{\n"
         '  "club": "<exact club name from AVAILABLE CLUBS>",\n'
-        '  "dynamic_yardage": <number>,\n'
+        '  "dynamic_yardage": <expected yards this specific player will hit '
+        "the recommended club>,\n"
         '  "confidence": <number from 0 to 1>,\n'
         '  "reasoning": "<one short sentence>"\n'
         "}"
