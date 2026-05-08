@@ -657,7 +657,7 @@ def recommend_club(req: RecommendRequest, db: Session = Depends(get_db)):
         confidence=parsed.get("confidence"),
         reasoning=parsed.get("reasoning"),
         weather_used=weather_used,
-        history_count=len(history_lines),
+        history_count=len(hole_history_lines) + len(general_history_lines),
     )
 
 
