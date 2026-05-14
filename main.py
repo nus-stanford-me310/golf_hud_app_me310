@@ -1008,20 +1008,29 @@ def debug_list_shots(user_id: int, db: Session = Depends(get_db)):
 
 
 @app.delete("/debug/users/{user_id}/shots")
-def debug_wipe_shots(user_id: int, db: Session = Depends(get_db)):
-    """Delete every shot (and its attached recommendation) for a user. Useful
-    when the AI is over-fitting to a stale history pattern."""
+def debug_wipe_shots(
+    user_id: int,
+    hole_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    """Delete shots (and their attached recommendations) for a user. If
+    `hole_id` is given, only shots on that hole are deleted — useful when
+    you only want to reset Hole 1's history pattern without losing the rest.
+    Omit `hole_id` to wipe everything."""
     games = db.query(Game).filter(Game.user_id == user_id).all()
     game_ids = [g.game_id for g in games]
     deleted = 0
     if game_ids:
-        shots = db.query(Shot).filter(Shot.game_id.in_(game_ids)).all()
-        for s in shots:
+        q = db.query(Shot).filter(Shot.game_id.in_(game_ids))
+        if hole_id is not None:
+            q = q.filter(Shot.hole_id == hole_id)
+        for s in q.all():
             db.delete(s)   # cascade clears the recommendation row
             deleted += 1
         db.commit()
-    print(f"[debug] wiped {deleted} shots for user {user_id}", flush=True)
-    return {"user_id": user_id, "deleted": deleted}
+    scope = f"hole {hole_id}" if hole_id is not None else "all holes"
+    print(f"[debug] wiped {deleted} shots for user {user_id} ({scope})", flush=True)
+    return {"user_id": user_id, "hole_id": hole_id, "deleted": deleted}
 
 
 @app.post("/debug/users/{user_id}/shots/seed")
