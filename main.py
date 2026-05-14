@@ -1053,25 +1053,41 @@ def debug_seed_shots(user_id: int, hole_id: int = 1, db: Session = Depends(get_d
     db.flush()
 
     fake_shots = [
-        # (shot_no, club, dynamic_yardage_for_rec, actual_distance_hit)
-        (1, "Driver",   235, 240),
-        (2, "5 Iron",   175, 170),
-        (3, "PW",       110,  60),  # short hole-out attempt
-        (4, "Driver",   240, 232),
-        (5, "7 Iron",   155, 158),
-        (6, "9 Iron",   135, 130),
-        (7, "SW",        80,  70),
-        (8, "3 Wood",   215, 220),
-        (9, "6 Iron",   165, 163),
-        (10, "PW",      115, 112),
+        # (shot_no, club, dynamic_yardage_for_rec, actual_distance_hit, distance_from_green_at_start_yd)
+        # The last value places each shot at a plausible GPS position along
+        # the tee→green line: "I was N yards from the green when I hit this
+        # shot." Shots stack: shot 1 starts at the tee (~480 yd out), shot 2
+        # picks up where shot 1 left off, etc.
+        (1,  "Driver",   235, 240, 480),
+        (2,  "5 Iron",   175, 170, 240),
+        (3,  "PW",       110,  60,  70),
+        (4,  "Driver",   240, 232, 480),
+        (5,  "7 Iron",   155, 158, 248),
+        (6,  "9 Iron",   135, 130, 130),
+        (7,  "SW",        80,  70,  70),
+        (8,  "3 Wood",   215, 220, 460),
+        (9,  "6 Iron",   165, 163, 240),
+        (10, "PW",       115, 112, 120),
     ]
-    for shot_no, club, dyn_yd, actual in fake_shots:
+    # Hole 1 anchors — keep in sync with the Unity HoleProfile in
+    # SampleScene.unity. Used to interpolate plausible GPS coords for each
+    # seeded shot so /debug/users/{id}/shots responses aren't all `null`.
+    GREEN_LAT, GREEN_LON = 37.42551, -122.1842
+    TEE_LAT, TEE_LON     = 37.42163, -122.1833
+    HOLE_YARDS           = 480.0
+    def _gps_for_distance(dist_from_green_yd: float) -> str:
+        t = max(0.0, min(1.0, dist_from_green_yd / HOLE_YARDS))
+        lat = GREEN_LAT + t * (TEE_LAT - GREEN_LAT)
+        lon = GREEN_LON + t * (TEE_LON - GREEN_LON)
+        return f"{lat:.6f},{lon:.6f}"
+
+    for shot_no, club, dyn_yd, actual, dist_from_green in fake_shots:
         s = Shot(
             game_id=game.game_id,
             hole_id=hole_id,
             shot_no=shot_no,
             distance=float(actual),
-            gps_loc=None,
+            gps_loc=_gps_for_distance(dist_from_green),
         )
         db.add(s)
         db.flush()
