@@ -965,6 +965,125 @@ if STATIC_DIR.exists():
         )
 
 
+# --------------------------------------------------------------------------
+# DEBUG ENDPOINTS — read/wipe/seed shot history for testing.
+#
+# NO AUTH on these. They're intentionally open so the Unity Editor and
+# curl-based tests can drive them without juggling JWTs, but that means
+# they're DANGEROUS in production: anyone can wipe anyone's history. Lock
+# them down (auth + env-var gate) before a real public launch.
+# --------------------------------------------------------------------------
+
+@app.get("/debug/users/{user_id}/shots")
+def debug_list_shots(user_id: int, db: Session = Depends(get_db)):
+    """Return every shot logged for a user, ordered most-recent first."""
+    games = db.query(Game).filter(Game.user_id == user_id).all()
+    game_ids = [g.game_id for g in games]
+    if not game_ids:
+        return {"user_id": user_id, "total": 0, "shots": []}
+
+    shots = (
+        db.query(Shot)
+        .filter(Shot.game_id.in_(game_ids))
+        .order_by(Shot.shot_id.desc())
+        .all()
+    )
+    out = []
+    for s in shots:
+        rec = s.recommendation
+        out.append({
+            "shot_id": s.shot_id,
+            "game_id": s.game_id,
+            "hole_id": s.hole_id,
+            "shot_no": s.shot_no,
+            "distance": s.distance,
+            "gps_loc": s.gps_loc,
+            "recommendation": {
+                "club": rec.club,
+                "dynamic_yardage": rec.dynamic_yardage,
+                "confidence": rec.confidence,
+            } if rec is not None else None,
+        })
+    return {"user_id": user_id, "total": len(out), "shots": out}
+
+
+@app.delete("/debug/users/{user_id}/shots")
+def debug_wipe_shots(user_id: int, db: Session = Depends(get_db)):
+    """Delete every shot (and its attached recommendation) for a user. Useful
+    when the AI is over-fitting to a stale history pattern."""
+    games = db.query(Game).filter(Game.user_id == user_id).all()
+    game_ids = [g.game_id for g in games]
+    deleted = 0
+    if game_ids:
+        shots = db.query(Shot).filter(Shot.game_id.in_(game_ids)).all()
+        for s in shots:
+            db.delete(s)   # cascade clears the recommendation row
+            deleted += 1
+        db.commit()
+    print(f"[debug] wiped {deleted} shots for user {user_id}", flush=True)
+    return {"user_id": user_id, "deleted": deleted}
+
+
+@app.post("/debug/users/{user_id}/shots/seed")
+def debug_seed_shots(user_id: int, hole_id: int = 1, db: Session = Depends(get_db)):
+    """Seed a varied, plausible shot history for testing. Creates one fake
+    Game for the user on the given hole and attaches a sequence of shots
+    spanning multiple clubs and distances, each with an attached
+    recommendation. Call this AFTER /debug/users/{user_id}/shots (DELETE) if
+    you want a clean slate."""
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    hole = db.query(Hole).filter(Hole.hole_id == hole_id).first()
+    if hole is None:
+        raise HTTPException(status_code=404, detail="Hole not found")
+
+    # Create a synthetic game to hang the shots off.
+    game = Game(user_id=user_id, hole_id=hole_id, started_at=datetime.utcnow())
+    db.add(game)
+    db.flush()
+
+    fake_shots = [
+        # (shot_no, club, dynamic_yardage_for_rec, actual_distance_hit)
+        (1, "Driver",   235, 240),
+        (2, "5 Iron",   175, 170),
+        (3, "PW",       110,  60),  # short hole-out attempt
+        (4, "Driver",   240, 232),
+        (5, "7 Iron",   155, 158),
+        (6, "9 Iron",   135, 130),
+        (7, "SW",        80,  70),
+        (8, "3 Wood",   215, 220),
+        (9, "6 Iron",   165, 163),
+        (10, "PW",      115, 112),
+    ]
+    for shot_no, club, dyn_yd, actual in fake_shots:
+        s = Shot(
+            game_id=game.game_id,
+            hole_id=hole_id,
+            shot_no=shot_no,
+            distance=float(actual),
+            gps_loc=None,
+        )
+        db.add(s)
+        db.flush()
+        rec = ClubRecommendation(
+            shot_id=s.shot_id,
+            club=club,
+            dynamic_yardage=float(dyn_yd),
+            confidence=0.85,
+        )
+        db.add(rec)
+    db.commit()
+    print(f"[debug] seeded {len(fake_shots)} fake shots for user {user_id} hole {hole_id}", flush=True)
+    return {
+        "user_id": user_id,
+        "hole_id": hole_id,
+        "game_id": game.game_id,
+        "seeded": len(fake_shots),
+        "clubs": sorted({c for _, c, _, _ in fake_shots}),
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
 
