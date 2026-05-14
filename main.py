@@ -478,8 +478,18 @@ def recommend_club(req: RecommendRequest, db: Session = Depends(get_db)):
             hole_lines.append(f"Par: {hole.par}")
         if hole.yardage is not None:
             hole_lines.append(f"Posted yardage: {hole.yardage}")
-    if req.distance_to_pin is not None:
+    if req.distance_to_pin is not None and req.distance_to_pin > 0:
         hole_lines.append(f"Distance remaining to pin: {int(req.distance_to_pin)} yd")
+    else:
+        # No distance signal from the client. Without this anchor GPT-4o-mini
+        # collapses to the same "par 5 reach club" every call (5 Wood). Be
+        # explicit so it errs toward conservative mid-distance clubs instead.
+        print(f"[recommend-club] WARNING: no distance_to_pin for user={req.user_id} hole={req.hole_id}", flush=True)
+        hole_lines.append(
+            "Distance remaining to pin: UNKNOWN — do NOT assume a typical par-5 reach distance; "
+            "recommend a conservative mid-iron or hybrid based on the player's general history "
+            "median carry, and set confidence below 0.4."
+        )
 
     # Shot history at THIS hole (most context-specific signal: same target,
     # similar lies, same hazards). Pulled across every game this user has
