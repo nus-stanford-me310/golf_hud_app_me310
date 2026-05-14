@@ -754,53 +754,121 @@ next shot?"
 """
 
 
+# Keyword patterns that signal a club-selection question. Matching is
+# lower-case substring — we want to be generous, since Whisper transcripts
+# vary in phrasing ("what should I hit", "what club should I use", "which
+# iron from here", "is this a 7", etc.).
+_CLUB_INTENT_SUBSTRINGS = (
+    "what club", "which club", "what iron", "which iron",
+    "what wedge", "which wedge", "what should i hit", "what do i hit",
+    "which one should i hit", "what do you recommend", "club recommendation",
+    "should i use my", "should i hit my", "is this a", "is it a",
+    "club from here", "yardage", "what's the play",
+)
+
+
+def _looks_like_club_question(text: str) -> bool:
+    t = text.lower()
+    return any(s in t for s in _CLUB_INTENT_SUBSTRINGS)
+
+
+def _spoken_recommendation(rec: RecommendResponse) -> str:
+    """Convert a structured /recommend-club result into a one-sentence reply
+    suitable for TTS. Falls back gracefully if any field is missing."""
+    club = (rec.club or "").strip() or "your stock club"
+    if rec.dynamic_yardage:
+        yd = int(round(rec.dynamic_yardage))
+        body = f"Take your {club} — expect about {yd} yards"
+    else:
+        body = f"Take your {club}"
+    reasoning = (rec.reasoning or "").strip().rstrip(".")
+    if reasoning:
+        return f"{body}. {reasoning}."
+    return f"{body}. Smooth tempo, commit to it."
+
+
 @app.post("/ask-caddie", response_model=AskCaddieResponse)
-def ask_caddie(req: AskCaddieRequest):
+def ask_caddie(req: AskCaddieRequest, db: Session = Depends(get_db)):
     text = (req.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
 
-    # Attach lightweight situational context if the Unity client sent it.
-    context_bits = []
-    if req.hole_id is not None:
-        context_bits.append(f"current hole: {req.hole_id}")
-    if req.distance_to_pin is not None and req.distance_to_pin > 0:
-        context_bits.append(f"distance to pin: {int(req.distance_to_pin)} yd")
-    context_line = (
-        "Situation: " + ", ".join(context_bits) if context_bits else None
-    )
+    # If the question is about club selection AND we have a signed-in user
+    # plus a hole, hand it to /recommend-club's existing logic so the spoken
+    # reply uses real player profile + history + weather + club inventory
+    # instead of generic GPT advice. Falls back to free-form caddie chat for
+    # everything else (or if recommend-club fails / lacks context).
+    reply = None
+    used_recommend_club = False
+    if (
+        req.user_id and req.user_id > 0
+        and req.hole_id and req.hole_id > 0
+        and _looks_like_club_question(text)
+    ):
+        try:
+            rec_req = RecommendRequest(
+                user_id=req.user_id,
+                hole_id=req.hole_id,
+                distance_to_pin=req.distance_to_pin,
+            )
+            print("=" * 60, flush=True)
+            print(f"[ask-caddie→recommend-club] user={req.user_id} hole={req.hole_id} d2pin={req.distance_to_pin}", flush=True)
+            print(f"[ask-caddie→recommend-club] question: {text}", flush=True)
+            rec = recommend_club(rec_req, db)
+            reply = _spoken_recommendation(rec)
+            used_recommend_club = True
+            print(f"[ask-caddie→recommend-club] club={rec.club} yd={rec.dynamic_yardage} conf={rec.confidence}", flush=True)
+            print(f"[ask-caddie→recommend-club] reply: {reply}", flush=True)
+        except HTTPException as he:
+            print(f"[ask-caddie→recommend-club] skipped ({he.status_code}: {he.detail}) — falling back to chat", flush=True)
+        except Exception as e:
+            print(f"[ask-caddie→recommend-club] error ({e}) — falling back to chat", flush=True)
 
-    messages = [{"role": "system", "content": ASK_CADDIE_SYSTEM_PROMPT}]
-    if context_line:
-        messages.append({"role": "system", "content": context_line})
-    messages.append({"role": "user", "content": text})
-
-    try:
-        client = _openai_client()
-
-        print("=" * 60, flush=True)
-        print(f"[ask-caddie] user={req.user_id} hole={req.hole_id} d2pin={req.distance_to_pin}", flush=True)
-        print(f"[ask-caddie] question: {text}", flush=True)
-
-        completion = client.chat.completions.create(
-            model="gpt-4o-mini",
-            temperature=0.5,
-            max_tokens=120,
-            messages=messages,
+    if reply is None:
+        # Free-form caddie chat path (off-topic redirect, swing tips, etc.).
+        context_bits = []
+        if req.hole_id is not None:
+            context_bits.append(f"current hole: {req.hole_id}")
+        if req.distance_to_pin is not None and req.distance_to_pin > 0:
+            context_bits.append(f"distance to pin: {int(req.distance_to_pin)} yd")
+        context_line = (
+            "Situation: " + ", ".join(context_bits) if context_bits else None
         )
-        reply = (completion.choices[0].message.content or "").strip()
-        print(f"[ask-caddie] reply: {reply}", flush=True)
-    except Exception as e:
-        print(f"[ask-caddie] OpenAI chat error: {e}", flush=True)
-        raise HTTPException(status_code=502, detail=f"OpenAI error: {e}")
+
+        messages = [{"role": "system", "content": ASK_CADDIE_SYSTEM_PROMPT}]
+        if context_line:
+            messages.append({"role": "system", "content": context_line})
+        messages.append({"role": "user", "content": text})
+
+        try:
+            client = _openai_client()
+
+            print("=" * 60, flush=True)
+            print(f"[ask-caddie] user={req.user_id} hole={req.hole_id} d2pin={req.distance_to_pin}", flush=True)
+            print(f"[ask-caddie] question: {text}", flush=True)
+
+            completion = client.chat.completions.create(
+                model="gpt-4o-mini",
+                temperature=0.5,
+                max_tokens=120,
+                messages=messages,
+            )
+            reply = (completion.choices[0].message.content or "").strip()
+            print(f"[ask-caddie] reply: {reply}", flush=True)
+        except Exception as e:
+            print(f"[ask-caddie] OpenAI chat error: {e}", flush=True)
+            raise HTTPException(status_code=502, detail=f"OpenAI error: {e}")
 
     # Text-to-speech: synthesize a spoken version of the reply. WAV is used
     # (not mp3) so Unity decodes it via UnityWebRequestMultimedia without an
     # external mp3 decoder. TTS failure is non-fatal — text-only still returns.
+    # _openai_client() is re-resolved here because the recommend-club path
+    # doesn't define `client` locally.
     audio_base64 = None
     audio_format = None
     try:
-        tts = client.audio.speech.create(
+        tts_client = _openai_client()
+        tts = tts_client.audio.speech.create(
             model="tts-1",
             voice="onyx",            # warm conversational male — caddie-ish
             input=reply,
@@ -809,7 +877,8 @@ def ask_caddie(req: AskCaddieRequest):
         audio_bytes = tts.read() if hasattr(tts, "read") else tts.content
         audio_base64 = base64.b64encode(audio_bytes).decode("ascii")
         audio_format = "wav"
-        print(f"[ask-caddie] tts: {len(audio_bytes) / 1024:.1f} KB", flush=True)
+        tag = "ask-caddie→recommend-club" if used_recommend_club else "ask-caddie"
+        print(f"[{tag}] tts: {len(audio_bytes) / 1024:.1f} KB", flush=True)
     except Exception as tts_err:
         print(f"[ask-caddie] TTS failed (text-only reply): {tts_err}", flush=True)
     print("=" * 60, flush=True)
