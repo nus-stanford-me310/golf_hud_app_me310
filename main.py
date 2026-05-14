@@ -1048,7 +1048,7 @@ def debug_seed_shots(user_id: int, hole_id: int = 1, db: Session = Depends(get_d
         raise HTTPException(status_code=404, detail="Hole not found")
 
     # Create a synthetic game to hang the shots off.
-    game = Game(user_id=user_id, hole_id=hole_id, started_at=datetime.utcnow())
+    game = Game(user_id=user_id, hole_id=hole_id, start_time=datetime.utcnow())
     db.add(game)
     db.flush()
 
