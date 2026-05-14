@@ -151,6 +151,23 @@ class RecommendResponse(BaseModel):
     history_count: int = 0
 
 
+class AskCaddieRequest(BaseModel):
+    """Free-form "Hey Steve, …" question from the player. The Unity client sends
+    the Whisper transcript so the backend doesn't run STT twice."""
+    text: str
+    user_id: Optional[int] = None        # for personalization / future history
+    hole_id: Optional[int] = None
+    distance_to_pin: Optional[float] = None
+
+
+class AskCaddieResponse(BaseModel):
+    """Spoken caddie reply. `audio_base64` is base64-encoded WAV (16-bit PCM)
+    suitable for Unity's UnityWebRequestMultimedia.GetAudioClip."""
+    reply: str
+    audio_base64: Optional[str] = None
+    audio_format: Optional[str] = None   # "wav" when audio is present
+
+
 class ActiveUserResponse(BaseModel):
     user_id: Optional[int] = None
     name: Optional[str] = None

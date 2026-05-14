@@ -6,6 +6,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
+import base64
 import os
 import threading
 import time
@@ -44,6 +45,8 @@ from schemas import (
     HoleResponse,
     RecommendRequest,
     RecommendResponse,
+    AskCaddieRequest,
+    AskCaddieResponse,
     WeatherInfo,
 )
 from auth import (
@@ -694,6 +697,127 @@ def recommend_club(req: RecommendRequest, db: Session = Depends(get_db)):
         reasoning=parsed.get("reasoning"),
         weather_used=weather_used,
         history_count=len(hole_history_lines) + len(general_history_lines),
+    )
+
+
+# --------------------------------------------------------------------------
+# ASK CADDIE — free-form "Hey Steve, …" voice questions.
+#
+# Unity captures audio after the wake word, runs Whisper locally (already part
+# of WakeWordListener), then POSTs the transcript here. We reply with a short
+# spoken caddie response: text + base64-encoded WAV from OpenAI TTS. The
+# system prompt is strict — golf topics only, with Stanford GC context — and
+# off-topic asks get a one-sentence redirect, not an answer.
+# --------------------------------------------------------------------------
+
+ASK_CADDIE_SYSTEM_PROMPT = """You are an expert AI golf caddie and coach for a golfer wearing
+mixed-reality glasses. The golfer just said "Hey Steve, …" and asked a question.
+
+You are caddying at the Stanford Golf Course in Stanford, California.
+Local context you may draw on (use only when relevant):
+- Par-70, tree-lined classic course (William P. Bell, 1930).
+- Front nine rolls through hills; back nine is flatter with reachable par-5s.
+- Bentgrass greens, fast, generally break toward the Bay (west).
+- Common winds are westerly off the foothills; afternoons can pick up.
+- Notable holes: #2 short drivable par 4; #12 signature uphill par 4;
+  #18 reachable par 5.
+If you don't know a specific Stanford fact, give general advice that fits the
+situation rather than inventing details.
+
+YOUR ONLY TOPIC IS GOLF.
+Allowed: this round, club selection, swing mechanics, shot strategy, course
+management, putting, mental game, rules, etiquette, equipment, the Stanford
+course, other courses/pros if directly compared to the player's situation.
+
+REFUSE everything else (politics, news, jokes, weather as small-talk, other
+sports, personal life, code/math, philosophy, etc.). Do NOT answer the
+question — instead, redirect in ONE short sentence, e.g.:
+  "Let's keep it on the course — what shot are you facing?"
+  "I'm just your caddie today. Want help reading this green?"
+Never argue or explain the refusal. Just pivot back to golf.
+
+Style (every reply, including redirects):
+- 2-3 sentences max, under 50 words. Your reply will be SPOKEN ALOUD —
+  write like you're talking next to the player.
+- No bullets, no lists, no headings, no markdown, no emojis, no parentheticals.
+- Clear, encouraging, flowing sentences.
+
+Example (on-topic):
+Golfer: "What club for 150 into the wind?"
+You: "At 150 into the breeze, take an extra club — go 6-iron and swing
+smooth. Aim a hair left of the pin to let the wind hold it."
+
+Example (off-topic):
+Golfer: "Who's winning the Warriors game?"
+You: "Not my department — I'm just your caddie. Want me to help set up this
+next shot?"
+"""
+
+
+@app.post("/ask-caddie", response_model=AskCaddieResponse)
+def ask_caddie(req: AskCaddieRequest):
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    # Attach lightweight situational context if the Unity client sent it.
+    context_bits = []
+    if req.hole_id is not None:
+        context_bits.append(f"current hole: {req.hole_id}")
+    if req.distance_to_pin is not None and req.distance_to_pin > 0:
+        context_bits.append(f"distance to pin: {int(req.distance_to_pin)} yd")
+    context_line = (
+        "Situation: " + ", ".join(context_bits) if context_bits else None
+    )
+
+    messages = [{"role": "system", "content": ASK_CADDIE_SYSTEM_PROMPT}]
+    if context_line:
+        messages.append({"role": "system", "content": context_line})
+    messages.append({"role": "user", "content": text})
+
+    try:
+        client = _openai_client()
+
+        print("=" * 60, flush=True)
+        print(f"[ask-caddie] user={req.user_id} hole={req.hole_id} d2pin={req.distance_to_pin}", flush=True)
+        print(f"[ask-caddie] question: {text}", flush=True)
+
+        completion = client.chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=0.5,
+            max_tokens=120,
+            messages=messages,
+        )
+        reply = (completion.choices[0].message.content or "").strip()
+        print(f"[ask-caddie] reply: {reply}", flush=True)
+    except Exception as e:
+        print(f"[ask-caddie] OpenAI chat error: {e}", flush=True)
+        raise HTTPException(status_code=502, detail=f"OpenAI error: {e}")
+
+    # Text-to-speech: synthesize a spoken version of the reply. WAV is used
+    # (not mp3) so Unity decodes it via UnityWebRequestMultimedia without an
+    # external mp3 decoder. TTS failure is non-fatal — text-only still returns.
+    audio_base64 = None
+    audio_format = None
+    try:
+        tts = client.audio.speech.create(
+            model="tts-1",
+            voice="onyx",            # warm conversational male — caddie-ish
+            input=reply,
+            response_format="wav",
+        )
+        audio_bytes = tts.read() if hasattr(tts, "read") else tts.content
+        audio_base64 = base64.b64encode(audio_bytes).decode("ascii")
+        audio_format = "wav"
+        print(f"[ask-caddie] tts: {len(audio_bytes) / 1024:.1f} KB", flush=True)
+    except Exception as tts_err:
+        print(f"[ask-caddie] TTS failed (text-only reply): {tts_err}", flush=True)
+    print("=" * 60, flush=True)
+
+    return AskCaddieResponse(
+        reply=reply,
+        audio_base64=audio_base64,
+        audio_format=audio_format,
     )
 
 
