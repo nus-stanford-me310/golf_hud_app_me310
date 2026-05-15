@@ -170,6 +170,23 @@ class AskCaddieResponse(BaseModel):
     audio_format: Optional[str] = None   # "wav" when audio is present
 
 
+class CelebrateRequest(BaseModel):
+    """Fired by Unity when CompleteHole is called — used to trigger the
+    spoken 'Good job!' celebration. Optional context lets the caddie
+    personalise the line (e.g. 'Good job! Two on hole one.')."""
+    hole_number: Optional[int] = None
+    strokes: Optional[int] = None
+    par: Optional[int] = None
+
+
+class CelebrateResponse(BaseModel):
+    """Spoken celebration reply. Same audio shape as AskCaddieResponse so the
+    existing TTS-playback path on the Unity side just works."""
+    reply: str
+    audio_base64: Optional[str] = None
+    audio_format: Optional[str] = None
+
+
 class ActiveUserResponse(BaseModel):
     user_id: Optional[int] = None
     name: Optional[str] = None

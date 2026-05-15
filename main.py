@@ -47,6 +47,8 @@ from schemas import (
     RecommendResponse,
     AskCaddieRequest,
     AskCaddieResponse,
+    CelebrateRequest,
+    CelebrateResponse,
     WeatherInfo,
 )
 from auth import (
@@ -987,6 +989,56 @@ def ask_caddie(req: AskCaddieRequest, db: Session = Depends(get_db)):
     print("=" * 60, flush=True)
 
     return AskCaddieResponse(
+        reply=reply,
+        audio_base64=audio_base64,
+        audio_format=audio_format,
+    )
+
+
+@app.post("/celebrate", response_model=CelebrateResponse)
+def celebrate(req: CelebrateRequest):
+    """Fixed-line spoken celebration fired when Unity calls CompleteHole.
+    Returns 'Good job!' (or a slightly more specific line when hole/strokes
+    context is provided) and the WAV TTS audio for HUD playback. TTS failure
+    degrades to text-only — Unity will still flash confetti."""
+    if req.hole_number and req.strokes:
+        # e.g. "Good job! Two on hole one." — score-aware line so the player
+        # gets a small dopamine bump for low scores.
+        score_word = {1: "Hole in one!", 2: "Two", 3: "Three", 4: "Four", 5: "Five"}.get(
+            req.strokes, f"{req.strokes}"
+        )
+        if req.strokes == 1:
+            reply = f"Good job! {score_word} On hole {req.hole_number}!"
+        else:
+            reply = f"Good job! {score_word} on hole {req.hole_number}."
+    else:
+        reply = "Good job!"
+
+    audio_base64 = None
+    audio_format = None
+    try:
+        tts_client = _openai_client()
+        tts = tts_client.audio.speech.create(
+            model="gpt-4o-mini-tts",
+            voice="coral",
+            input=reply,
+            response_format="wav",
+            instructions=(
+                "Speak in a warm, friendly Scottish accent — Edinburgh / Highland "
+                "rather than thick Glaswegian. You are a female golf caddie cheering "
+                "the player for sinking the putt. Tone is bright, congratulatory, "
+                "and a little playful. Pace is upbeat. Soft rolled r's, lilting "
+                "cadence, but always clearly intelligible."
+            ),
+        )
+        audio_bytes = tts.read() if hasattr(tts, "read") else tts.content
+        audio_base64 = base64.b64encode(audio_bytes).decode("ascii")
+        audio_format = "wav"
+        print(f"[celebrate] hole={req.hole_number} strokes={req.strokes} reply='{reply}' tts={len(audio_bytes) / 1024:.1f} KB", flush=True)
+    except Exception as tts_err:
+        print(f"[celebrate] TTS failed (text-only): {tts_err}", flush=True)
+
+    return CelebrateResponse(
         reply=reply,
         audio_base64=audio_base64,
         audio_format=audio_format,
