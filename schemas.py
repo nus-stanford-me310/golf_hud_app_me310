@@ -158,6 +158,8 @@ class AskCaddieRequest(BaseModel):
     user_id: Optional[int] = None        # for personalization / future history
     hole_id: Optional[int] = None
     distance_to_pin: Optional[float] = None
+    lat: Optional[float] = None          # player GPS — enables live weather context
+    lon: Optional[float] = None
 
 
 class AskCaddieResponse(BaseModel):
