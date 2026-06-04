@@ -158,6 +158,12 @@ class AskCaddieRequest(BaseModel):
     user_id: Optional[int] = None        # for personalization / future history
     hole_id: Optional[int] = None
     distance_to_pin: Optional[float] = None
+    club: Optional[str] = None           # club currently shown on the HUD — so the
+                                         # spoken reply matches the visual recommendation
+    recommended_club: Optional[str] = None  # same thing under the field name the
+                                         # BeamProSpeech client sends; either is accepted
+    reasoning: Optional[str] = None      # why that club was picked, so the voice can
+                                         # explain the displayed club (backend rec only)
     lat: Optional[float] = None          # player GPS — enables live weather context
     lon: Optional[float] = None
 

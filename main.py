@@ -857,6 +857,28 @@ def _spoken_recommendation(rec: RecommendResponse) -> str:
     return f"{body}. Smooth tempo, commit to it."
 
 
+def _spoken_from_hud(
+    club: Optional[str],
+    distance_to_pin: Optional[float],
+    reasoning: Optional[str] = None,
+) -> str:
+    """Build the spoken club reply straight from what's already on the HUD so
+    the audio matches the visual exactly — same club, same distance-to-pin.
+    No second recommendation call, so the voice can never disagree with the
+    display. `reasoning` (if present) is the explanation behind that exact
+    club, passed through from the recommendation that set the HUD."""
+    club = (club or "").strip()
+    if distance_to_pin is not None and distance_to_pin > 0:
+        yd = int(round(distance_to_pin))
+        body = f"Take your {club}. You've got about {yd} yards to the pin"
+    else:
+        body = f"Take your {club}"
+    reasoning = (reasoning or "").strip().rstrip(".")
+    if reasoning:
+        return f"{body}. {reasoning}."
+    return f"{body}. Smooth tempo, commit to it."
+
+
 @app.post("/ask-caddie", response_model=AskCaddieResponse)
 def ask_caddie(req: AskCaddieRequest, db: Session = Depends(get_db)):
     text = (req.text or "").strip()
@@ -870,10 +892,31 @@ def ask_caddie(req: AskCaddieRequest, db: Session = Depends(get_db)):
     # everything else (or if recommend-club fails / lacks context).
     reply = None
     used_recommend_club = False
-    if (
-        req.user_id and req.user_id > 0
+    is_club_question = _looks_like_club_question(text)
+
+    # The club currently on the HUD. Clients send it as either `club`
+    # (WakeWordListener) or `recommended_club` (BeamProSpeech); accept both.
+    hud_club = (req.club or req.recommended_club or "").strip()
+
+    # Preferred path: if the question is about club selection and the HUD is
+    # already showing a recommendation, speak THAT — same club, same
+    # distance-to-pin the player is looking at. The visual was already produced
+    # by /recommend-club (via GameSessionManager), so re-deriving here would
+    # risk a second AI pick that disagrees with the display.
+    if is_club_question and hud_club:
+        reply = _spoken_from_hud(hud_club, req.distance_to_pin, req.reasoning)
+        used_recommend_club = True
+        print("=" * 60, flush=True)
+        print(f"[ask-caddie→hud-rec] user={req.user_id} hole={req.hole_id} club={hud_club} d2pin={req.distance_to_pin}", flush=True)
+        print(f"[ask-caddie→hud-rec] question: {text}", flush=True)
+        print(f"[ask-caddie→hud-rec] reply: {reply}", flush=True)
+
+    # Fallback: club question but no club on the HUD yet — let /recommend-club's
+    # logic pick one (uses real profile + history + weather + inventory).
+    elif (
+        is_club_question
+        and req.user_id and req.user_id > 0
         and req.hole_id and req.hole_id > 0
-        and _looks_like_club_question(text)
     ):
         try:
             rec_req = RecommendRequest(
